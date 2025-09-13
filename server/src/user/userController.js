@@ -114,7 +114,7 @@ const logout = (req, res) => {
   }
 };
 
-const sendOtp = async (req, res) => {
+const sendOtp = async (req, res,next) => {
   const { userId } = req.body;
 
   try {
@@ -224,4 +224,170 @@ const verifyOtp = async (req, res, next) => {
     return next(createHttpError(500, `internal server error ${error.message}`));
   }
 };
-export { logout, logInUser, registerUser, sendOtp, verifyOtp };
+
+const isAuthauncated = (req, res) => {
+  const { userId } = req.body;
+
+  try {
+    if (userId) {
+      res.json({ sucess: true });
+    }
+  } catch (error) {
+    res.json({ sucess: false, message: "Unauthorize" });
+  }
+};
+
+const resetPasswordOtp = async (req, res, next) => {
+  const { userId } = req.body;
+
+  try {
+    const user = await userModal.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    user.resetPassword = generatedOtp;
+    user.resetPasswordExpireAt = Date.now() + 7 * 60 * 1000;
+    await user.save();
+
+  
+    const emailTemplate = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset Password OTP</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: 'Arial', sans-serif;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }
+    .header {
+      background-color: #4a90e2;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .content {
+      padding: 20px 30px;
+      color: #333333;
+    }
+    .otp-box {
+      font-size: 28px;
+      font-weight: bold;
+      color: #4a90e2;
+      background: #f0f4ff;
+      padding: 15px 20px;
+      text-align: center;
+      border-radius: 8px;
+      margin: 20px 0;
+      letter-spacing: 4px;
+    }
+    .footer {
+      background-color: #f4f6f8;
+      text-align: center;
+      font-size: 12px;
+      color: #777;
+      padding: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Password Reset Request</h1>
+    </div>
+
+    <div class="content">
+      <h2>Hello, ${user.name}</h2>
+      <p>
+        We received a request to reset your password. Use the OTP below to reset your password.
+        <strong>This OTP is valid for the next 2 minutes.</strong>
+      </p>
+      <div class="otp-box">${generatedOtp}</div>
+      <p>If you did not request this password reset, you can safely ignore this email.</p>
+    </div>
+
+    <div class="footer">
+      <p>&copy; ${new Date().getFullYear()} Your Auth-app. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+`;
+    const mailOption = {
+      from: config.SENDER_EMAIL,
+      to: user.email,
+      subject: "Reset Password OTP",
+      html: emailTemplate,
+    };
+
+    // Send email
+    try {
+      await transpoter.sendMail(mailOption);
+    } catch (error) {
+      return next(createHttpError(500, "otp send nahi hua"));
+    }
+
+    return res.status(200).json({ message: "OTP sent successfully" });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    return next(createHttpError(500, "Something went wrong while sending OTP"));
+  }
+};
+
+
+const verifyResetPassword = async (req, res) => {
+  const { otp, userId, password } = req.body;
+  try {
+    const user = await userModal.findById(userId);
+    if (user.resetPassword !== otp) {
+      res.json({ sucess: false, message: "invalid otp" });
+    }
+
+    if (user.resetPasswordExpireAt < Date.now()) {
+      res.json({
+        sucess: false,
+        message: "plese try again otp timeLimit exist",
+      });
+    }
+
+    const hashPassword = await bcrypt.hash(password, 10);
+    user.password = hashPassword;
+    user.resetPassword = "";
+    user.resetPasswordExpireAt = null;
+
+    await user.save();
+    res.json({ sucess: "true", message: "password changed sucessfully" });
+  } catch (error) {
+    return next(createHttpError(500, `internal server error ${error}`));
+  }
+};
+
+export {
+  logout,
+  logInUser,
+  registerUser,
+  sendOtp,
+  isAuthauncated,
+  verifyOtp,
+  resetPasswordOtp,
+  verifyResetPassword,
+};
